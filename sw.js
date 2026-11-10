@@ -1,5 +1,5 @@
 /* offline support: the game keeps working without a connection after the first visit */
-const C='sp-202611092153';
+const C='sp-202611102113';
 const CORE=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png','./favicon-32.png','./icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>self.clients.claim()));});

@@ -44,7 +44,7 @@ body{margin:0;background:var(--ink);color:var(--snow);font-family:var(--body);fo
 #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
 button{font-family:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--ice);outline-offset:3px}
-#hud[hidden],#ctl[hidden],#screen[hidden]{display:none!important}
+#hud[hidden],#ctl[hidden],#screen[hidden],body.kbd #ctl{display:none!important}
 
 /* HUD */
 #hud{position:absolute;top:10px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));pointer-events:none}
@@ -624,6 +624,12 @@ function buildTrack(def,free){
 /*WORLD_END*/
 /*PHYS_START*/
 const G0=9,GA=7.3,KD=.0012;
+/* the ground falls away faster than a free-flying rider would drop (kicker lips, sharp crests): leave the ground */
+function liftOff(r,T,vy,vz){
+ let thr=.6;
+ for(const k of T.kickers){if(k.z>r.z+4)break;if(r.z>k.z-3&&r.z<k.z+(k.Lt||0)+4&&r.x>k.x0-1&&r.x<k.x1+1){thr=.1;break;}}
+ const tau=.1,ya=r.y+vy*tau-.5*GA*tau*tau;return ya>T.h(r.z+vz*tau,r.x+r.lv*tau)+thr;
+}
 function newRider(T,z,x){
  const th=Math.atan(T.m(z,x));
  return {z,x,y:T.h(z,x),s:8,lv:0,vz:0,vy:0,pitch:th,spinA:0,spinDir:1,air:false,airT:0,rotAcc:0,grabT:0,gr:0,
@@ -706,7 +712,7 @@ function stepRider(r,dt,inp,P,T,ev){
   if(inp.jump&&!r.jh){
    r.air=true;r.airT=0;r.rotAcc=0;r.spinA=0;r.grabT=0;r.sw=0;r.fr=0;r.vz=vz;r.vy=vy+5.2;r.y=Math.max(gy,r.y)+.02;r.nitro=Math.min(100,r.nitro+2);
    if(ev&&ev.takeoff)ev.takeoff(r);
-  }else if(yp>gy+.07&&r.s>5){
+  }else if((yp>gy+.07&&r.s>5)||(r.s>9&&liftOff(r,T,vy,vz))){
    r.air=true;r.airT=0;r.rotAcc=0;r.spinA=0;r.grabT=0;r.sw=0;r.fr=0;r.vz=vz;r.vy=vy;r.y=Math.max(yp,gy);
    if(ev&&ev.takeoff)ev.takeoff(r);
   }else{
@@ -1423,6 +1429,22 @@ SFX.load();
 function buzz(ms){if(SFX.on&&navigator.vibrate){try{navigator.vibrate(ms);}catch(e){}}}
 ['pointerdown','keydown','touchend'].forEach(ev=>window.addEventListener(ev,()=>SFX.unlock(),{capture:true,passive:true}));
 document.addEventListener('visibilitychange',()=>{if(!SFX.c)return;if(document.hidden)SFX.c.suspend().catch(()=>{});else SFX.c.resume().catch(()=>{});});
+/* ---------- game portal adapter (CrazyGames SDK when present; does nothing elsewhere) ---------- */
+const PLAT={sdk:null,playing:false,
+ async init(){
+  try{const C=window.CrazyGames;if(C&&C.SDK){await C.SDK.init();if(C.SDK.environment!=='disabled')this.sdk=C.SDK;}}catch(e){this.sdk=null;}
+  this.device();
+ },
+ device(){
+  let desk=false;
+  try{const t=this.sdk&&this.sdk.user&&this.sdk.user.systemInfo&&this.sdk.user.systemInfo.device&&this.sdk.user.systemInfo.device.type;
+   desk=t?t==='desktop':(window.matchMedia&&matchMedia('(hover:hover) and (pointer:fine)').matches&&!(navigator.maxTouchPoints>0));}catch(e){}
+  if(document.body)document.body.classList.toggle('kbd',!!desk);
+ },
+ play(on){if(on===this.playing)return;this.playing=on;if(!this.sdk)return;try{on?this.sdk.game.gameplayStart():this.sdk.game.gameplayStop();}catch(e){}},
+ happy(){if(this.sdk)try{this.sdk.game.happytime();}catch(e){}}
+};
+window.addEventListener('touchstart',()=>document.body.classList.remove('kbd'),{passive:true,capture:true});
 /*FX_END*/
 /*TASKS_START*/
 /* Mission mode: an endless stream of tasks. tier 1 easy .. 3 hard */
@@ -1619,7 +1641,7 @@ function setKey(e,v){
  else{const k=KEYMAP[e.key];if(!k)return;e.preventDefault();inp[k]=v;const b=document.querySelector('.cb[data-k="'+k+'"]');if(b)b.classList.toggle('on',v);return;}
  if(stickId===null)inp.steer=(kd.r?1:0)-(kd.l?1:0);
 }
-window.addEventListener('keydown',e=>{if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'))return;if(e.key==='Escape'){pauseGame();return;}setKey(e,true);});
+window.addEventListener('keydown',e=>{if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'))return;if(e.key==='Escape'){pauseGame();return;}if((e.key==='p'||e.key==='P')&&G&&G.mode!=='demo'){if(G.state==='paused')resumeGame();else pauseGame();return;}setKey(e,true);});
 window.addEventListener('keyup',e=>{if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'))return;setKey(e,false);});
 function clearInput(){for(const k in inp)inp[k]=k==='steer'?0:false;kd.l=kd.r=false;document.querySelectorAll('.cb.on').forEach(b=>b.classList.remove('on'));stickEnd();}
 
@@ -1653,7 +1675,7 @@ function startGame(mode,ti,oi){
   g.aiEv={crash(){},land(){}};
   g.aiLook={ch:CHARS[Math.floor(Math.random()*CHARS.length)],board:{col:g.od.col,acc:'#ffffff',gfx:'stripes'},costume:{kind:'plain',body:g.od.col,acc:'#ffffff',id:'bot'},gog:{col:'#222836',lens:'#ffffff',id:'gb'},hm:{kind:'safety',col:g.od.col}};
  }
- G=g;E.scr.hidden=true;E.hud.hidden=false;E.ctl.hidden=false;
+ G=g;E.scr.hidden=true;E.hud.hidden=false;E.ctl.hidden=false;PLAT.play(true);
  E.mode.textContent=mode==='task'?'MISSIONS':free?'FREESTYLE':'RACE';E.prog.hidden=free;E.task.hidden=true;
  if(mode==='task'){g.tasksDone=0;g.taskRP=0;g.taskCoin=0;g.nextTask=2.8;g.task=null;}
  E.pop.classList.remove('go');
@@ -1664,7 +1686,7 @@ function popup(t,sub,bad,big){
  E.pop.className=(bad?'bad ':'')+(big?'big ':'sm ');void E.pop.offsetWidth;E.pop.classList.add('go');
 }
 function burst(g,r,n){for(let i=0;i<n;i++)g.parts.push({x:r.x+(Math.random()-.5)*.8,y:r.y+.2,z:r.z,vx:(Math.random()-.5)*6,vy:2+Math.random()*5,vz:(r.vz||r.s)*.4+Math.random()*3,l:.6+Math.random()*.4,m:1,sz:.13,grow:.9,al:.8,gv:9});}
-function landBurst(g,r,k){const n=Math.round(14+12*k);for(let i=0;i<n;i++){const a=i/n*TAU+Math.random()*.3,sp=1.6+Math.random()*2.6*k;g.parts.push({x:r.x+Math.cos(a)*.35,y:r.y+.1,z:r.z+Math.sin(a)*.35,vx:Math.cos(a)*sp,vy:.6+Math.random()*1.8*k,vz:(r.s||0)*.78+Math.sin(a)*sp,l:.55+Math.random()*.45,m:1,sz:.2,grow:1.7,al:.75,gv:6});}}
+function landBurst(g,r,k){const n=Math.round(14+12*k);for(let i=0;i<n;i++){const a=i/n*TAU+Math.random()*.3,sp=1.6+Math.random()*2.6*k;g.parts.push({x:r.x+Math.cos(a)*.35,y:r.y+.1,z:r.z+Math.sin(a)*.35,vx:Math.cos(a)*sp,vy:.6+Math.random()*1.8*k,vz:(r.s||0)*.78+Math.sin(a)*sp,l:.5+Math.random()*.4,m:1,sz:.14,grow:1.3,al:.6,gv:6});}}
 function confetti(g,n){
  const cols=['#ffd24a','#4fb4ff','#ffffff','#7bf0c8','#ff7aa8'];
  for(let i=0;i<n;i++)g.conf.push({x:W*(.2+.6*Math.random()),y:H*.25+Math.random()*30,vx:(Math.random()-.5)*340,vy:-120-Math.random()*260,r:Math.random()*6,vr:(Math.random()-.5)*14,s:3+Math.random()*3,l:1.6+Math.random(),col:cols[i%cols.length]});
@@ -1693,10 +1715,10 @@ r.nitro=Math.min(100,r.nitro+8+types*10);
 }
 function pauseGame(){
  if(!G||(G.state!=='run'&&G.state!=='count'))return;
- G.prev=G.state;G.state='paused';clearInput();showScreen('pause');
+ G.prev=G.state;G.state='paused';clearInput();PLAT.play(false);showScreen('pause');
 }
-function resumeGame(){if(G&&G.state==='paused'){G.state=G.prev;E.scr.hidden=true;}}
-function toMenu(){E.hud.hidden=true;E.ctl.hidden=true;E.cd.textContent='';E.pop.classList.remove('go');clearInput();startDemo();showScreen('menu');}
+function resumeGame(){if(G&&G.state==='paused'){G.state=G.prev;E.scr.hidden=true;PLAT.play(true);}}
+function toMenu(){PLAT.play(false);E.hud.hidden=true;E.ctl.hidden=true;E.cd.textContent='';E.pop.classList.remove('go');clearInput();startDemo();showScreen('menu');}
 $('#pauseBtn').addEventListener('click',pauseGame);
 $('#skipBtn').addEventListener('click',()=>taskSkip(G));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseGame();});
@@ -2574,7 +2596,7 @@ const SCR={
    <b>E</b><span>Spin in the air. Hold ← or → to choose the direction.</span>
    <b>G</b><span>Grab the board in the air.</span>
    <b>SHIFT</b><span>Nitro boost.</span>
-   <b>ESC</b><span>Pause.</span>
+   <b>P or ESC</b><span>Pause.</span>
   </div></div>
   </div>`;},
  code(){return `<div class="wrap" style="max-width:640px"><div class="hdr"><button class="btn gh c" data-a="go" data-v="menu">‹ Back</button><h2>Save code</h2><span></span></div><h3>Save progress</h3><div class="card">${typeof claude==='undefined'?`<div class="nm" style="font:700 13px var(--display)">Saved on this device</div><div class="muted" style="font-size:13px;margin-top:6px">Your progress is saved automatically in this browser. To continue on another phone or computer, copy the backup code below and paste it there under Restore.</div></div>`:`<div class="nm" style="font:700 13px var(--display)">${esc(cloud.status)}</div><div class="muted" style="font-size:13px;margin-top:6px">Progress is always saved on this device. When you open the game while signed in to Claude, it is also synced to your account so it follows you between phones. Apple, Google or email sign-in is not possible in this version.</div></div>`}
@@ -2631,7 +2653,7 @@ function award(rp,coins){
  return nw>old?{old,nw,bonus}:null;
 }
 function showResult(g){
- E.hud.hidden=true;E.ctl.hidden=true;E.cd.textContent='';clearInput();
+ PLAT.play(false);E.hud.hidden=true;E.ctl.hidden=true;E.cd.textContent='';clearInput();
  const sv=S.save,best=sv.best[g.def.id]||(sv.best[g.def.id]={});
  let res;
  if(g.mode==='race'){
@@ -2654,7 +2676,7 @@ function showResult(g){
   res={title:'Run complete',rows:[['Mountain',g.def.n],['Trick score',fmt(g.score)+rec],['Tricks landed',String(g.tricks)],['RP earned','+'+fmt(rp)],['Cash earned','+ $'+fmt(coins)]]};
   res.rankUp=award(rp,coins);
  }
- g.res=res;persist();showScreen('result');if(res.rankUp)setTimeout(()=>SFX.win(),250);
+ g.res=res;persist();showScreen('result');if(res.rankUp){setTimeout(()=>SFX.win(),250);PLAT.happy();}
 }
 E.scr.addEventListener('click',e=>{
  const b=e.target.closest('[data-a]');if(!b||b.disabled)return;
@@ -2686,7 +2708,7 @@ E.scr.addEventListener('click',e=>{
  else if(a==='quit')toMenu();
  else if(a==='again'){startGame(G.mode,S.selT,S.selO);}
 });
-resize();startDemo();showScreen(S.save.name?'menu':'setup');cloudInit();requestAnimationFrame(frame);
+resize();startDemo();showScreen(S.save.name?'menu':'setup');cloudInit();PLAT.init();requestAnimationFrame(frame);
 /*MENUS_END*/
 })();
 
